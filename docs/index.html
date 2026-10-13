@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolliCraft - Pollinations AI plugin for Minecraft servers</title>
+<style>
+  :root { --bg:#1d1f21; --panel:#2a2d31; --text:#e8e8e8; --muted:#a8acb3; --pink:#ff66ff; --green:#7CFC7C; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:40px 24px 16px; text-align:center; background:linear-gradient(180deg,#3b2a4a,#1d1f21); }
+  h1 { margin:0 0 8px; font-size:40px; letter-spacing:1px; }
+  h1 span { color:var(--pink); }
+  .tag { color:var(--muted); font-size:18px; margin:0 0 20px; }
+  .btn { display:inline-block; margin:6px; padding:14px 22px; border-radius:8px; background:#5b8c2a; color:#fff; font-weight:700; text-decoration:none; border-bottom:4px solid #3c5e1b; }
+  .btn.alt { background:#444a52; border-bottom-color:#2c3036; }
+  main { max-width:1040px; margin:0 auto; padding:16px 24px 48px; }
+  .demo { display:grid; grid-template-columns: 1.5fr 1fr; gap:20px; align-items:start; }
+  .chat { background:rgba(0,0,0,.55); border-radius:6px; padding:14px 16px; font-family: "Minecraft", Menlo, Consolas, monospace; font-size:14px; line-height:1.55; }
+  .chat p { margin:0 0 6px; }
+  .p { color:var(--pink); } .g { color:#bbb; } .w { color:#fff; } .ok { color:var(--green); } .y { color:#ffd84a; }
+  .map { background:#c9b48a; padding:14px; border-radius:6px; border:6px solid #7a5a32; text-align:center; }
+  .map img { width:100%; max-width:320px; image-rendering:pixelated; display:block; margin:0 auto; }
+  .map small { display:block; margin-top:8px; color:#3b2a14; font-weight:600; }
+  h2 { margin-top:36px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap:14px; }
+  .card { background:var(--panel); border-radius:8px; padding:14px 16px; }
+  .card b { color:var(--pink); }
+  ol li { margin:6px 0; }
+  code { background:#111; padding:2px 6px; border-radius:4px; }
+  pre { background:#111; padding:12px; border-radius:6px; overflow:auto; }
+  footer { text-align:center; color:var(--muted); padding:24px; }
+  a { color:#9ecbff; }
+  @media (max-width: 760px) { .demo { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Polli<span>Craft</span></h1>
+  <p class="tag">Pollinations AI for your Minecraft server: talking villagers, prompt-to-map pictures and chat answers, paid with your own Pollen.</p>
+  <a class="btn" id="dl" href="https://github.com/Drjacky/PolliCraft/releases/latest">Download PolliCraft.jar</a>
+  <a class="btn alt" href="https://github.com/Drjacky/PolliCraft">Source &amp; docs</a>
+  <p class="tag" style="font-size:14px">Paper / Folia / Spigot &middot; Minecraft 1.20.6+ &middot; Java 21 &middot; MIT</p>
+</header>
+<main>
+  <h2>What players see</h2>
+  <div class="demo">
+    <div class="chat" aria-label="In-game chat from a real test run on Paper 1.21.11">
+      <p class="w">&gt; /polli npc create Greta blacksmith</p>
+      <p><span class="p">[Polli]</span> <span class="ok">Spawned <span class="p">Greta</span> (blacksmith). Right-click to talk.</span></p>
+      <p><span class="p">[Polli]</span> <span class="g">You are now talking to <span class="p">Greta</span>. Type in chat, or <span class="w">bye</span> to stop.</span></p>
+      <p><span class="p">Greta</span><span class="g">:</span> <span class="w">Ah, traveler&mdash;keep your boots off my forge floor. Name&rsquo;s Greta, blacksmith of this village; if you&rsquo;ve got iron to spare, I&rsquo;ll gladly help you hammer it into something worth your while.</span></p>
+      <p><span class="g">Steve_Tester &gt; <span class="p">Greta</span>:</span> <span class="w">Can you fix my iron pickaxe? What do you need for it?</span></p>
+      <p><span class="p">Greta</span><span class="g">:</span> <span class="w">Aye, I can fix it&mdash;bring the iron pickaxe and tell me what it needs: if it&rsquo;s just durability, I&rsquo;ll need extra iron (and maybe some coal/XP to mend it).</span></p>
+      <p><span class="g">Steve_Tester &gt; <span class="p">Greta</span>:</span> <span class="w">Thanks! And what is better, diamond or netherite?</span></p>
+      <p><span class="p">Greta</span><span class="g">:</span> <span class="w">Diamond&rsquo;s tough, but netherite&rsquo;s the real prize&mdash;stronger and more resistant, and it laughs at lava better too.</span></p>
+      <p class="w">&gt; /polli image a cozy wooden cabin in a snowy pine forest, pixel art</p>
+      <p><span class="p">[Polli]</span> <span class="g">Painting <span class="w">"a cozy wooden cabin in a snowy pine forest, pixel art"</span> with flux...</span></p>
+      <p><span class="p">[Polli]</span> <span class="ok">Your map is ready. Put it in an item frame to show it off!</span></p>
+    </div>
+    <div class="map">
+      <img src="map-cabin.png" alt="128x128 map picture generated by Pollinations: a wooden cabin in a snowy pine forest">
+      <small>The real 128&times;128 map from that run</small>
+    </div>
+  </div>
+
+  <h2>Features</h2>
+  <div class="cards">
+    <div class="card"><b>Villagers that talk.</b> Each one has its own persona and memory. Right-click and type in chat; players nearby hear the answers.</div>
+    <div class="card"><b>Your own personas.</b> Blacksmith, librarian, farmer and guide built in, or write one: <code>/polli npc create Jack a grumpy pirate</code>.</div>
+    <div class="card"><b>Prompt to map.</b> <code>/polli image &lt;prompt&gt;</code> paints a filled map for an item frame. Saved across restarts.</div>
+    <div class="card"><b>Any live model.</b> Pick any text or image model from the live lists; <code>/polli models</code> shows them in game.</div>
+    <div class="card"><b>Your own Pollen.</b> One API key in <code>config.yml</code>. Cooldowns, token caps and permissions keep spending in check.</div>
+    <div class="card"><b>Paper, Folia, Spigot.</b> Async HTTP; results run on the right region thread on Folia.</div>
+  </div>
+
+  <h2>Install</h2>
+  <ol>
+    <li>Download <a href="https://github.com/Drjacky/PolliCraft/releases/latest">the latest PolliCraft jar</a> and drop it into <code>plugins/</code>.</li>
+    <li>Start the server once to create <code>plugins/PolliCraft/config.yml</code>.</li>
+    <li>Create a key at <a href="https://enter.pollinations.ai/keys">enter.pollinations.ai/keys</a> and paste it in:
+      <pre>api-key: "sk_..."
+text-model: "openai"
+image-model: "flux"</pre></li>
+    <li>Run <code>/polli reload</code> and try <code>/polli ask hello</code>.</li>
+  </ol>
+</main>
+<footer>
+  <a href="https://pollinations.ai/?ref=badge"><img src="https://raw.githubusercontent.com/pollinations/pollinations/main/packages/ui/src/brand/badge-made-with.svg" alt="Made with pollinations.ai"></a>
+</footer>
+<script>
+  // Point the button straight at the jar of the latest release when the API allows it.
+  fetch('https://api.github.com/repos/Drjacky/PolliCraft/releases/latest')
+    .then(r => r.ok ? r.json() : null)
+    .then(rel => {
+      const jar = rel && rel.assets && rel.assets.find(a => a.name.endsWith('.jar'));
+      if (jar) { const b = document.getElementById('dl'); b.href = jar.browser_download_url; b.textContent = 'Download ' + jar.name; }
+    }).catch(() => {});
+</script>
+</body>
+</html>

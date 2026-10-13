@@ -1,0 +1,35 @@
+name: PolliCraft
+version: '${version}'
+main: ai.pollinations.minecraft.PolliCraftPlugin
+api-version: '1.20'
+folia-supported: true
+description: Pollinations AI for Minecraft servers - talking villager NPCs, prompt-to-map images and chat answers, paid with your own Pollen.
+website: https://github.com/Drjacky/PolliCraft
+authors: [Drjacky]
+commands:
+  polli:
+    description: Pollinations AI commands
+    usage: /polli <ask|image|npc|models|reload>
+    aliases: [pollinations]
+permissions:
+  pollicraft.ask:
+    description: Ask the AI a question in chat
+    default: true
+  pollicraft.image:
+    description: Turn a prompt into an image on a map
+    default: true
+  pollicraft.talk:
+    description: Talk to AI villagers
+    default: true
+  pollicraft.npc:
+    description: Create and remove AI villagers
+    default: op
+  pollicraft.models:
+    description: List live Pollinations models
+    default: op
+  pollicraft.reload:
+    description: Reload the config
+    default: op
+  pollicraft.bypasscooldown:
+    description: Skip the request cooldown
+    default: op

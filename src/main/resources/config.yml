@@ -1,0 +1,58 @@
+# PolliCraft - Pollinations AI for your Minecraft server
+# All requests are paid with the Pollen of the key below.
+
+# Your Pollinations API key (sk_...). Create one at https://enter.pollinations.ai/keys
+# You can also leave this empty and set the POLLINATIONS_API_KEY environment variable.
+api-key: ""
+
+# Base URL of the Pollinations API.
+api-base: "https://gen.pollinations.ai"
+
+# Any model name or alias from https://gen.pollinations.ai/text/models
+# Run /polli models text in game to see the live list.
+text-model: "openai"
+
+# Any model name or alias from https://gen.pollinations.ai/image/models
+# Run /polli models image in game to see the live list.
+image-model: "flux"
+
+# Image size requested from the API. It is scaled down to one 128x128 map.
+image-size: 512
+
+# Seconds a player must wait between two AI requests.
+cooldown-seconds: 5
+
+# Longest answer (in tokens) the text model may give.
+max-tokens: 300
+
+# Seconds before an API call is given up.
+timeout-seconds: 90
+
+# Messages shown to players. Use & for colour codes.
+prefix: "&d[Polli]&r "
+
+ask:
+  system-prompt: "You are a helpful assistant inside a Minecraft server. Answer in at most 3 short sentences of plain text, no markdown."
+
+npc:
+  # Villagers stand still and cannot be hurt.
+  freeze: true
+  invulnerable: true
+  # Players further away than this (blocks) end the conversation.
+  talk-distance: 10
+  # A conversation ends after this many idle seconds.
+  idle-timeout-seconds: 120
+  # Messages kept in memory per conversation.
+  history-size: 12
+  # Players within this range also see the villager's answers.
+  hear-radius: 16
+  # Default persona used by /polli npc create <name> when no persona is given.
+  default-persona: "blacksmith"
+
+# Personas for /polli npc create <name> <persona>. Add as many as you like.
+# {name} is replaced with the villager's name.
+personas:
+  blacksmith: "You are {name}, a gruff but kind village blacksmith in a Minecraft world. You love iron, diamonds and good tools. Answer in 1-3 short sentences, stay in character, no markdown."
+  librarian: "You are {name}, a curious village librarian in a Minecraft world who knows every enchantment and loves telling old legends. Answer in 1-3 short sentences, stay in character, no markdown."
+  farmer: "You are {name}, a cheerful farmer in a Minecraft world. You talk about crops, weather and your animals, and give friendly tips. Answer in 1-3 short sentences, stay in character, no markdown."
+  guide: "You are {name}, the server guide in a Minecraft world. You welcome new players, explain Minecraft mechanics clearly and give survival tips. Answer in 1-3 short sentences, no markdown."
