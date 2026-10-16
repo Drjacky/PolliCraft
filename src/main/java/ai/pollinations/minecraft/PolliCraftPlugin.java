@@ -537,52 +537,75 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                 send(player, "&7" + session.villagerName() + " is too far away. The conversation ended.");
                 return;
             }
+            if (session.conversation().isPending()) {
+                // One request per conversation: the answer to the last line is still on its way.
+                send(player, "&7" + session.villagerName() + " is still thinking. Wait for the answer.");
+                return;
+            }
             if (!passLimit(player, chatLimits)) {
+                return;
+            }
+            if (!session.conversation().begin(text, System.currentTimeMillis())) {
+                send(player, "&7" + session.villagerName() + " is still thinking. Wait for the answer.");
                 return;
             }
             broadcastNear(player, color("&7" + player.getName() + " &8> &d" + session.villagerName()
                     + "&8: &f" + text));
-            talk(player, session, text);
+            talk(player, session);
         });
     }
 
-    private void talk(Player player, Session session, String text) {
+    /** Sends the line that {@link Conversation#begin} added; the answer or the failure ends the pending request. */
+    private void talk(Player player, Session session) {
         Conversation conversation = session.conversation();
         String name = session.villagerName();
         String model = session.model() != null ? session.model() : textModel();
         int maxTokens = getConfig().getInt("max-tokens", 300);
-        conversation.addUser(text, System.currentTimeMillis());
         // Wait for the saved memory (read when the chat opened), so the answer knows it and the save keeps it.
         session.remembered()
                 .thenCompose(loaded -> client.chat(model, conversation.messages(), maxTokens))
-                .whenComplete((answer, error) -> tasks.entity(player, () -> {
+                .whenComplete((answer, error) -> {
+                    // Settle the conversation here, not on the player's thread: if the player left, the task
+                    // below may never run, and the conversation must not stay pending.
+                    String reply = error == null ? clean(answer.text()) : null;
+                    List<PollinationsClient.Message> snapshot = null;
                     if (error != null) {
-                        conversation.dropLastUser();
-                        send(player, "&c" + name + " could not answer: " + PollinationsClient.describe(error));
-                        return;
+                        conversation.failed();
+                    } else {
+                        conversation.answered(reply, System.currentTimeMillis());
+                        snapshot = conversation.history(); // exactly this answer's memory, before a next line
                     }
-                    String reply = clean(answer.text());
-                    conversation.addAssistant(reply, System.currentTimeMillis());
-                    if (sessions.get(player.getUniqueId()) == session) {
-                        // Only the open chat saves, so a late answer can't bring back memory after bye,
-                        // a new persona or a removed villager.
-                        memory.save(session.villager(), player.getUniqueId(), conversation.history());
-                    }
-                    broadcastNear(player, color("&d" + name + "&8: &f" + reply));
-                    sendCost(player, model, answer);
-                    Entity villager = Bukkit.getEntity(session.villager());
-                    if (villager instanceof Villager v && v.getWorld() == player.getWorld()) {
-                        Location eyes = player.getEyeLocation();
-                        tasks.entity(v, () -> { // the villager's own thread on Folia
-                            v.getWorld().playSound(v.getLocation(), Sound.ENTITY_VILLAGER_YES, 1f, 1f);
-                            try {
-                                v.lookAt(eyes);
-                            } catch (NoSuchMethodError spigot) {
-                                // Paper-only; plain Spigot just skips it.
-                            }
-                        });
-                    }
-                }));
+                    List<PollinationsClient.Message> saved = snapshot;
+                    tasks.entity(player, () -> deliver(player, session, model, name, answer, reply, saved, error));
+                });
+    }
+
+    /** Shows the answer (or the failure) on the player's thread and saves the memory snapshot of that answer. */
+    private void deliver(Player player, Session session, String model, String name, PollinationsClient.Answer answer,
+                         String reply, List<PollinationsClient.Message> snapshot, Throwable error) {
+        if (error != null) {
+            send(player, "&c" + name + " could not answer: " + PollinationsClient.describe(error));
+            return;
+        }
+        if (sessions.get(player.getUniqueId()) == session) {
+            // Only the open chat saves, so a late answer can't bring back memory after bye,
+            // a new persona or a removed villager.
+            memory.save(session.villager(), player.getUniqueId(), snapshot);
+        }
+        broadcastNear(player, color("&d" + name + "&8: &f" + reply));
+        sendCost(player, model, answer);
+        Entity villager = Bukkit.getEntity(session.villager());
+        if (villager instanceof Villager v && v.getWorld() == player.getWorld()) {
+            Location eyes = player.getEyeLocation();
+            tasks.entity(v, () -> { // the villager's own thread on Folia
+                v.getWorld().playSound(v.getLocation(), Sound.ENTITY_VILLAGER_YES, 1f, 1f);
+                try {
+                    v.lookAt(eyes);
+                } catch (NoSuchMethodError spigot) {
+                    // Paper-only; plain Spigot just skips it.
+                }
+            });
+        }
     }
 
     /** Shows a line to the talking player and to players near them. */

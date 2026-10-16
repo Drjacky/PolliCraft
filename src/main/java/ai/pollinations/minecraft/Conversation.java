@@ -12,6 +12,8 @@ public final class Conversation {
     private final int maxMessages;
     private final Deque<PollinationsClient.Message> turns = new ArrayDeque<>();
     private long lastActivity;
+    /** True while a request for this conversation waits for its answer: one at a time, so turns stay in order. */
+    private boolean pending;
 
     public Conversation(String systemPrompt, int maxMessages, long now) {
         this.systemPrompt = systemPrompt;
@@ -42,6 +44,36 @@ public final class Conversation {
         if (!turns.isEmpty() && "user".equals(turns.peekLast().role())) {
             turns.pollLast();
         }
+    }
+
+    /**
+     * Starts a request with the player's line, or returns false while an earlier one still waits for its answer.
+     * Only one request per conversation is pending, so answers can't land out of order and a failed request
+     * can only drop its own line.
+     */
+    public synchronized boolean begin(String text, long now) {
+        if (pending) {
+            return false;
+        }
+        pending = true;
+        addUser(text, now);
+        return true;
+    }
+
+    /** The pending request was answered: keeps the answer and lets the next one start. */
+    public synchronized void answered(String text, long now) {
+        addAssistant(text, now);
+        pending = false;
+    }
+
+    /** The pending request failed: drops its line, so a retry does not repeat it, and lets the next one start. */
+    public synchronized void failed() {
+        dropLastUser();
+        pending = false;
+    }
+
+    public synchronized boolean isPending() {
+        return pending;
     }
 
     private void add(PollinationsClient.Message message) {

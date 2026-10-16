@@ -119,6 +119,40 @@ class PollinationsClientTest {
     }
 
     @Test
+    void onlyOneRequestPerConversationIsPending() {
+        Conversation conversation = new Conversation("sys", 12, 0);
+        assertTrue(conversation.begin("first", 1));
+        assertTrue(conversation.isPending());
+        // A second line while the first waits is refused and never enters the history.
+        assertFalse(conversation.begin("second", 2));
+        assertEquals(List.of("first"), contents(conversation));
+        conversation.answered("answer one", 3);
+        assertFalse(conversation.isPending());
+        assertTrue(conversation.begin("second", 4));
+        conversation.answered("answer two", 5);
+        // Answers stay in order: each one follows its own line.
+        assertEquals(List.of("first", "answer one", "second", "answer two"), contents(conversation));
+    }
+
+    @Test
+    void aFailedRequestDropsOnlyItsOwnLine() {
+        Conversation conversation = new Conversation("sys", 12, 0);
+        assertTrue(conversation.begin("hello", 1));
+        conversation.answered("hi", 2);
+        assertTrue(conversation.begin("lost line", 3));
+        assertFalse(conversation.begin("typed while waiting", 4));
+        conversation.failed();
+        assertFalse(conversation.isPending());
+        assertEquals(List.of("hello", "hi"), contents(conversation));
+        assertTrue(conversation.begin("retry", 5));
+        assertEquals(List.of("hello", "hi", "retry"), contents(conversation));
+    }
+
+    private static List<String> contents(Conversation conversation) {
+        return conversation.history().stream().map(PollinationsClient.Message::content).toList();
+    }
+
+    @Test
     void personaPromptUsesTemplateOrFreeText() {
         String fromConfig = Personas.systemPrompt("You are {name}, a smith.", "blacksmith", "Bob");
         assertTrue(fromConfig.startsWith("You are Bob, a smith."), fromConfig);
