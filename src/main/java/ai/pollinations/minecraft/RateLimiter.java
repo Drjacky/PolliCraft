@@ -36,7 +36,8 @@ public final class RateLimiter {
     /** Records the request and allows it, or reports how long to wait. Denied requests are not recorded. */
     public synchronized Decision tryAcquire(UUID player, long nowMillis) {
         Deque<Long> recent = hits.computeIfAbsent(player, id -> new ArrayDeque<>());
-        while (!recent.isEmpty() && nowMillis - recent.peekFirst() >= windowMillis) {
+        // Keep hits for the window, or longer when the cooldown is longer than the window.
+        while (!recent.isEmpty() && nowMillis - recent.peekFirst() >= Math.max(windowMillis, minGapMillis)) {
             recent.pollFirst();
         }
         if (!recent.isEmpty()) {

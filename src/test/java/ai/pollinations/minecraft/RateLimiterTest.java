@@ -71,4 +71,16 @@ class RateLimiterTest {
         limiter.setLimits(0, 0);
         assertTrue(limiter.tryAcquire(alice, 4_000).allowed());
     }
+
+    @Test
+    void aCooldownLongerThanTheWindowStillHolds() {
+        RateLimiter limiter = new RateLimiter(2 * HOUR, 10, HOUR);
+        UUID alice = UUID.randomUUID();
+
+        assertTrue(limiter.tryAcquire(alice, 0).allowed());
+        RateLimiter.Decision later = limiter.tryAcquire(alice, HOUR + 1_000);
+        assertFalse(later.allowed());
+        assertEquals(HOUR - 1_000, later.retryAfterMillis());
+        assertTrue(limiter.tryAcquire(alice, 2 * HOUR).allowed());
+    }
 }

@@ -33,7 +33,7 @@ public final class Catalogue {
                 continue;
             }
             JsonObject model = element.getAsJsonObject();
-            catalogue.models.putIfAbsent(lower(string(model, "name")), model);
+            catalogue.models.put(lower(string(model, "name")), model); // a real name wins over an alias
             if (model.has("aliases") && model.get("aliases").isJsonArray()) {
                 for (JsonElement alias : model.getAsJsonArray("aliases")) {
                     if (alias.isJsonPrimitive()) {

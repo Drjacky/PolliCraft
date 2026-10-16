@@ -9,7 +9,7 @@ One plugin that adds [Pollinations](https://pollinations.ai) to your Paper, Foli
 
 ## Features
 
-- **Villagers that talk.** `/polli npc create Greta blacksmith` spawns a villager with its own persona. Right-click it and just type in chat. It remembers each player's conversation, even after a restart, and players nearby hear its answers. Type `bye` to stop.
+- **Villagers that talk.** `/polli npc create Greta blacksmith` spawns a villager with its own persona. Right-click it and just type in chat. It remembers each player's conversation, even after a restart (saved in `plugins/PolliCraft/memory/`; a new persona or `/polli npc remove` clears it), and players nearby hear its answers. Type `bye` to stop.
 - **Your own personas.** Four are built in (blacksmith, librarian, farmer, guide). Add more in `config.yml`, or describe one on the spot: `/polli npc create Jack a grumpy pirate who only talks about treasure`.
 - **Prompt to map.** `/polli image a cozy cabin in a snowy forest` paints the picture on a filled map. Hang it in an item frame. Maps are saved to disk and survive restarts.
 - **Ask the AI.** `/polli ask how do I find diamonds?` answers in chat.

@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -74,8 +75,12 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
     /** Active conversation per player: the villager they talk to. */
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
 
-    /** {@code model} is the villager's own text model, or null for the default one. */
-    private record Session(UUID villager, String villagerName, String model, Conversation conversation) {
+    /**
+     * {@code model} is the villager's own text model, or null for the default one. {@code remembered} completes
+     * once the saved memory is back in the conversation.
+     */
+    private record Session(UUID villager, String villagerName, String model, Conversation conversation,
+                           CompletableFuture<Void> remembered) {
     }
 
     @Override
@@ -120,7 +125,9 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         if (io != null) {
             io.shutdown(); // finish the last memory and map writes
             try {
-                io.awaitTermination(5, TimeUnit.SECONDS);
+                if (!io.awaitTermination(5, TimeUnit.SECONDS)) {
+                    getLogger().warning("Some villager memory or map files may not have been saved.");
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -493,8 +500,10 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         String persona = villager.getPersistentDataContainer().get(personaKey, PersistentDataType.STRING);
         Conversation conversation = new Conversation(systemPrompt(persona, name),
                 getConfig().getInt("npc.history-size", 12), System.currentTimeMillis());
-        sessions.put(player.getUniqueId(), new Session(villager.getUniqueId(), name, modelOf(villager), conversation));
-        memory.load(villager.getUniqueId(), player.getUniqueId()).thenAccept(conversation::restore);
+        CompletableFuture<Void> remembered = memory.load(villager.getUniqueId(), player.getUniqueId())
+                .thenAccept(conversation::restore);
+        sessions.put(player.getUniqueId(),
+                new Session(villager.getUniqueId(), name, modelOf(villager), conversation, remembered));
         try {
             villager.lookAt(player);
         } catch (NoSuchMethodError spigot) {
@@ -541,8 +550,11 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         Conversation conversation = session.conversation();
         String name = session.villagerName();
         String model = session.model() != null ? session.model() : textModel();
+        int maxTokens = getConfig().getInt("max-tokens", 300);
         conversation.addUser(text, System.currentTimeMillis());
-        client.chat(model, conversation.messages(), getConfig().getInt("max-tokens", 300))
+        // Wait for the saved memory (read when the chat opened), so the answer knows it and the save keeps it.
+        session.remembered()
+                .thenCompose(loaded -> client.chat(model, conversation.messages(), maxTokens))
                 .whenComplete((answer, error) -> tasks.entity(player, () -> {
                     if (error != null) {
                         conversation.dropLastUser();
@@ -551,17 +563,24 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                     }
                     String reply = clean(answer.text());
                     conversation.addAssistant(reply, System.currentTimeMillis());
-                    memory.save(session.villager(), player.getUniqueId(), conversation.history());
+                    if (sessions.get(player.getUniqueId()) == session) {
+                        // Only the open chat saves, so a late answer can't bring back memory after bye,
+                        // a new persona or a removed villager.
+                        memory.save(session.villager(), player.getUniqueId(), conversation.history());
+                    }
                     broadcastNear(player, color("&d" + name + "&8: &f" + reply));
                     sendCost(player, model, answer);
                     Entity villager = Bukkit.getEntity(session.villager());
                     if (villager instanceof Villager v && v.getWorld() == player.getWorld()) {
-                        v.getWorld().playSound(v.getLocation(), Sound.ENTITY_VILLAGER_YES, 1f, 1f);
-                        try {
-                            v.lookAt(player);
-                        } catch (NoSuchMethodError spigot) {
-                            // Paper-only; plain Spigot just skips it.
-                        }
+                        Location eyes = player.getEyeLocation();
+                        tasks.entity(v, () -> { // the villager's own thread on Folia
+                            v.getWorld().playSound(v.getLocation(), Sound.ENTITY_VILLAGER_YES, 1f, 1f);
+                            try {
+                                v.lookAt(eyes);
+                            } catch (NoSuchMethodError spigot) {
+                                // Paper-only; plain Spigot just skips it.
+                            }
+                        });
                     }
                 }));
     }
