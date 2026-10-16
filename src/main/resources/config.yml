@@ -22,6 +22,11 @@ image-size: 512
 # Seconds a player must wait between two AI requests.
 cooldown-seconds: 5
 
+# Most requests one player can make in an hour (0 = no limit).
+# Chat counts /polli ask and talking to villagers; images count /polli image.
+chat-limit-per-hour: 60
+image-limit-per-hour: 10
+
 # Longest answer (in tokens) the text model may give.
 max-tokens: 300
 
@@ -42,7 +47,7 @@ npc:
   talk-distance: 10
   # A conversation ends after this many idle seconds.
   idle-timeout-seconds: 120
-  # Messages kept in memory per conversation.
+  # Messages each villager remembers per player. Saved in plugins/PolliCraft/memory/, so it survives restarts.
   history-size: 12
   # Players within this range also see the villager's answers.
   hear-radius: 16

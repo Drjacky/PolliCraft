@@ -29,6 +29,14 @@ public final class Conversation {
         lastActivity = now;
     }
 
+    /** Puts remembered turns from an earlier talk in front of this one, keeping the newest. */
+    public synchronized void restore(List<PollinationsClient.Message> earlier) {
+        List<PollinationsClient.Message> current = new ArrayList<>(turns);
+        turns.clear();
+        earlier.forEach(this::add);
+        current.forEach(this::add);
+    }
+
     /** Drops the last user turn when a request failed, so a retry does not repeat it. */
     public synchronized void dropLastUser() {
         if (!turns.isEmpty() && "user".equals(turns.peekLast().role())) {
@@ -52,6 +60,11 @@ public final class Conversation {
         list.add(new PollinationsClient.Message("system", systemPrompt));
         list.addAll(turns);
         return list;
+    }
+
+    /** The turns without the system prompt, for saving. */
+    public synchronized List<PollinationsClient.Message> history() {
+        return new ArrayList<>(turns);
     }
 
     public synchronized boolean isIdle(long now, long idleMillis) {

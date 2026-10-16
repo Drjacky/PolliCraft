@@ -5,6 +5,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -41,27 +42,45 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /** PolliCraft: Pollinations AI for Paper, Folia and Spigot servers. */
 public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabExecutor {
 
     private static final List<String> SUBCOMMANDS = List.of("ask", "image", "npc", "models", "reload", "help");
+    private static final long HOUR_MILLIS = 3_600_000L;
 
     private NamespacedKey personaKey;
     private NamespacedKey npcNameKey;
+    private NamespacedKey modelKey;
 
     private PollinationsClient client;
-    private Cooldowns cooldowns;
+    private RateLimiter chatLimits;
+    private RateLimiter imageLimits;
+    private volatile long cooldownMillis;
     private MapImages mapImages;
+    private Memory memory;
     private Tasks tasks;
+    /** One background thread for files (villager memory, map pictures), so the game never waits on the disk. */
+    private ExecutorService io;
+    /** The live text model list with prices, loaded in the background at start and on reload; null until then. */
+    private volatile Catalogue textCatalogue;
 
     /** Active conversation per player: the villager they talk to. */
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
 
-    private record Session(UUID villager, String villagerName, Conversation conversation) {
+    /**
+     * {@code model} is the villager's own text model, or null for the default one. {@code remembered} completes
+     * once the saved memory is back in the conversation.
+     */
+    private record Session(UUID villager, String villagerName, String model, Conversation conversation,
+                           CompletableFuture<Void> remembered) {
     }
 
     @Override
@@ -69,8 +88,15 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         saveDefaultConfig();
         personaKey = new NamespacedKey(this, "persona");
         npcNameKey = new NamespacedKey(this, "npc_name");
+        modelKey = new NamespacedKey(this, "model");
         tasks = new Tasks(this);
+        io = Executors.newSingleThreadExecutor(task -> {
+            Thread thread = new Thread(task, "PolliCraft-files");
+            thread.setDaemon(true);
+            return thread;
+        });
         mapImages = new MapImages(new File(getDataFolder(), "maps"), getLogger());
+        memory = new Memory(new File(getDataFolder(), "memory").toPath(), io, getLogger());
         loadSettings();
 
         PluginCommand command = getCommand("polli");
@@ -87,6 +113,7 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         }
         getLogger().info("PolliCraft ready on " + (Tasks.isFolia() ? "Folia" : Bukkit.getName())
                 + ". Text model: " + textModel() + ", image model: " + imageModel());
+        checkModels();
     }
 
     @Override
@@ -94,6 +121,16 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         sessions.clear();
         if (tasks != null) {
             tasks.cancelAll();
+        }
+        if (io != null) {
+            io.shutdown(); // finish the last memory and map writes
+            try {
+                if (!io.awaitTermination(5, TimeUnit.SECONDS)) {
+                    getLogger().warning("Some villager memory or map files may not have been saved.");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -109,12 +146,51 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                 key,
                 Duration.ofSeconds(Math.max(5, config.getInt("timeout-seconds", 90))),
                 "PolliCraft/" + getDescription().getVersion());
-        long cooldown = Math.max(0, config.getLong("cooldown-seconds", 5)) * 1000L;
-        if (cooldowns == null) {
-            cooldowns = new Cooldowns(cooldown);
+        cooldownMillis = Math.max(0, config.getLong("cooldown-seconds", 5)) * 1000L;
+        int chatsPerHour = config.getInt("chat-limit-per-hour", 60);
+        int imagesPerHour = config.getInt("image-limit-per-hour", 10);
+        if (chatLimits == null) {
+            chatLimits = new RateLimiter(cooldownMillis, chatsPerHour, HOUR_MILLIS);
+            imageLimits = new RateLimiter(cooldownMillis, imagesPerHour, HOUR_MILLIS);
         } else {
-            cooldowns.setCooldownMillis(cooldown);
+            chatLimits.setLimits(cooldownMillis, chatsPerHour);
+            imageLimits.setLimits(cooldownMillis, imagesPerHour);
         }
+    }
+
+    /**
+     * Loads the live model lists once, in the background, and warns in the log when a configured model is
+     * missing, needs paid Pollen or is down. The text list also prices answers for the cost line.
+     */
+    private void checkModels() {
+        String text = textModel();
+        String image = imageModel();
+        client.modelList("text").whenComplete((json, error) -> {
+            Catalogue catalogue = readCatalogue(json, error, "text");
+            if (catalogue != null) {
+                textCatalogue = catalogue;
+                catalogue.warnings(text, "text").forEach(getLogger()::warning);
+            }
+        });
+        client.modelList("image").whenComplete((json, error) -> {
+            Catalogue catalogue = readCatalogue(json, error, "image");
+            if (catalogue != null) {
+                catalogue.warnings(image, "image").forEach(getLogger()::warning);
+            }
+        });
+    }
+
+    private Catalogue readCatalogue(String json, Throwable error, String kind) {
+        try {
+            if (error == null) {
+                return Catalogue.parse(json);
+            }
+        } catch (RuntimeException unreadable) {
+            error = unreadable;
+        }
+        getLogger().info("Could not check the live " + kind + " model list (" + PollinationsClient.describe(error)
+                + "). Continuing without it.");
+        return null;
     }
 
     private String textModel() {
@@ -146,6 +222,7 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                     return true;
                 }
                 loadSettings();
+                checkModels();
                 send(sender, "&aConfig reloaded. Text model: &f" + textModel() + "&a, image model: &f" + imageModel());
             }
             default -> help(sender, label);
@@ -159,6 +236,7 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         sender.sendMessage(color("&7/" + label + " image <prompt> &f- paint a prompt on a map"));
         sender.sendMessage(color("&7/" + label + " npc create <name> [persona or description] &f- spawn an AI villager"));
         sender.sendMessage(color("&7/" + label + " npc persona <persona or description> &f- change the nearest AI villager"));
+        sender.sendMessage(color("&7/" + label + " npc model <model|default> &f- give the nearest AI villager its own text model"));
         sender.sendMessage(color("&7/" + label + " npc remove &f- remove the nearest AI villager"));
         sender.sendMessage(color("&7/" + label + " npc personas &f- list personas from config.yml"));
         sender.sendMessage(color("&7/" + label + " models [text|image] &f- list live models"));
@@ -174,19 +252,21 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
             send(sender, "&cUsage: /polli ask <question>");
             return;
         }
-        if (!passCooldown(sender)) {
+        if (!passLimit(sender, chatLimits)) {
             return;
         }
         send(sender, "&7Thinking...");
         List<PollinationsClient.Message> messages = List.of(
                 new PollinationsClient.Message("system", getConfig().getString("ask.system-prompt", "")),
                 new PollinationsClient.Message("user", question));
-        client.chat(textModel(), messages, getConfig().getInt("max-tokens", 300))
+        String model = textModel();
+        client.chat(model, messages, getConfig().getInt("max-tokens", 300))
                 .whenComplete((answer, error) -> reply(sender, () -> {
                     if (error != null) {
                         send(sender, "&c" + PollinationsClient.describe(error));
                     } else {
-                        send(sender, "&f" + clean(answer));
+                        send(sender, "&f" + clean(answer.text()));
+                        sendCost(sender, model, answer);
                     }
                 }));
     }
@@ -203,7 +283,7 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
             send(sender, "&cUsage: /polli image <prompt>");
             return;
         }
-        if (!passCooldown(sender)) {
+        if (!passLimit(sender, imageLimits)) {
             return;
         }
         int size = Math.max(128, Math.min(2048, getConfig().getInt("image-size", 512)));
@@ -229,7 +309,8 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
     private void giveMap(Player player, BufferedImage picture, String prompt) {
         MapView view = Bukkit.createMap(player.getWorld());
         MapImages.attach(view, picture);
-        mapImages.save(view.getId(), picture);
+        int mapId = view.getId();
+        io.execute(() -> mapImages.save(mapId, picture));
         ItemStack item = new ItemStack(Material.FILLED_MAP);
         MapMeta meta = (MapMeta) item.getItemMeta();
         meta.setMapView(view);
@@ -294,7 +375,29 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                 String persona = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
                 villager.getPersistentDataContainer().set(personaKey, PersistentDataType.STRING, persona);
                 sessions.values().removeIf(session -> session.villager().equals(villager.getUniqueId()));
+                memory.forget(villager.getUniqueId());
                 send(player, "&a" + npcName(villager) + " now has a new persona.");
+            }
+            case "model" -> {
+                Villager villager = nearestAiVillager(player, 6);
+                if (villager == null || args.length < 2) {
+                    send(player, villager == null ? "&cStand next to an AI villager first."
+                            : "&cUsage: /polli npc model <model|default>");
+                    return;
+                }
+                String model = args[1];
+                if (model.equalsIgnoreCase("default")) {
+                    villager.getPersistentDataContainer().remove(modelKey);
+                    send(player, "&a" + npcName(villager) + " now uses the default model (" + textModel() + ").");
+                } else {
+                    villager.getPersistentDataContainer().set(modelKey, PersistentDataType.STRING, model);
+                    send(player, "&a" + npcName(villager) + " now uses " + model + ".");
+                    Catalogue catalogue = textCatalogue;
+                    if (catalogue != null) {
+                        catalogue.warnings(model, "text").forEach(warning -> send(player, "&e" + warning));
+                    }
+                }
+                sessions.values().removeIf(session -> session.villager().equals(villager.getUniqueId()));
             }
             case "remove", "delete" -> {
                 Villager villager = nearestAiVillager(player, 6);
@@ -304,6 +407,7 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                 }
                 String name = npcName(villager);
                 sessions.values().removeIf(session -> session.villager().equals(villager.getUniqueId()));
+                memory.forget(villager.getUniqueId());
                 villager.remove();
                 send(player, "&aRemoved " + name + ".");
             }
@@ -312,7 +416,7 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                 send(player, "&ePersonas: &f" + (section == null ? "none" : String.join(", ", section.getKeys(false))));
                 send(player, "&7Or write your own: /polli npc create Bob a pirate who only talks about treasure");
             }
-            default -> send(player, "&cUsage: /polli npc <create|persona|remove|personas>");
+            default -> send(player, "&cUsage: /polli npc <create|persona|model|remove|personas>");
         }
     }
 
@@ -355,6 +459,12 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         return entity.getPersistentDataContainer().has(personaKey, PersistentDataType.STRING);
     }
 
+    /** The villager's own text model, or null when it uses text-model from config.yml. */
+    private String modelOf(Entity villager) {
+        String model = villager.getPersistentDataContainer().get(modelKey, PersistentDataType.STRING);
+        return model == null || model.isBlank() ? null : model;
+    }
+
     private String npcName(Entity villager) {
         String name = villager.getPersistentDataContainer().get(npcNameKey, PersistentDataType.STRING);
         return name == null ? "Villager" : name;
@@ -390,15 +500,17 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         String persona = villager.getPersistentDataContainer().get(personaKey, PersistentDataType.STRING);
         Conversation conversation = new Conversation(systemPrompt(persona, name),
                 getConfig().getInt("npc.history-size", 12), System.currentTimeMillis());
-        sessions.put(player.getUniqueId(), new Session(villager.getUniqueId(), name, conversation));
+        CompletableFuture<Void> remembered = memory.load(villager.getUniqueId(), player.getUniqueId())
+                .thenAccept(conversation::restore);
+        sessions.put(player.getUniqueId(),
+                new Session(villager.getUniqueId(), name, modelOf(villager), conversation, remembered));
         try {
             villager.lookAt(player);
         } catch (NoSuchMethodError spigot) {
             // Paper-only; ignored on Spigot.
         }
+        // A right-click only opens the chat and never calls the model, so clicking can't spend Pollen.
         send(player, "&7You are now talking to &d" + name + "&7. Type in chat, or &fbye&7 to stop.");
-        talk(player, villager.getUniqueId(), name, conversation,
-                "*" + player.getName() + " walks up and greets you*");
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
@@ -425,35 +537,50 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
                 send(player, "&7" + session.villagerName() + " is too far away. The conversation ended.");
                 return;
             }
-            if (!passCooldown(player)) {
+            if (!passLimit(player, chatLimits)) {
                 return;
             }
             broadcastNear(player, color("&7" + player.getName() + " &8> &d" + session.villagerName()
                     + "&8: &f" + text));
-            talk(player, session.villager(), session.villagerName(), session.conversation(), text);
+            talk(player, session, text);
         });
     }
 
-    private void talk(Player player, UUID villagerId, String name, Conversation conversation, String text) {
+    private void talk(Player player, Session session, String text) {
+        Conversation conversation = session.conversation();
+        String name = session.villagerName();
+        String model = session.model() != null ? session.model() : textModel();
+        int maxTokens = getConfig().getInt("max-tokens", 300);
         conversation.addUser(text, System.currentTimeMillis());
-        client.chat(textModel(), conversation.messages(), getConfig().getInt("max-tokens", 300))
+        // Wait for the saved memory (read when the chat opened), so the answer knows it and the save keeps it.
+        session.remembered()
+                .thenCompose(loaded -> client.chat(model, conversation.messages(), maxTokens))
                 .whenComplete((answer, error) -> tasks.entity(player, () -> {
                     if (error != null) {
                         conversation.dropLastUser();
                         send(player, "&c" + name + " could not answer: " + PollinationsClient.describe(error));
                         return;
                     }
-                    String reply = clean(answer);
+                    String reply = clean(answer.text());
                     conversation.addAssistant(reply, System.currentTimeMillis());
+                    if (sessions.get(player.getUniqueId()) == session) {
+                        // Only the open chat saves, so a late answer can't bring back memory after bye,
+                        // a new persona or a removed villager.
+                        memory.save(session.villager(), player.getUniqueId(), conversation.history());
+                    }
                     broadcastNear(player, color("&d" + name + "&8: &f" + reply));
-                    Entity villager = Bukkit.getEntity(villagerId);
+                    sendCost(player, model, answer);
+                    Entity villager = Bukkit.getEntity(session.villager());
                     if (villager instanceof Villager v && v.getWorld() == player.getWorld()) {
-                        try {
-                            v.lookAt(player);
-                            v.shakeHead();
-                        } catch (NoSuchMethodError spigot) {
-                            // Paper-only cosmetics; plain Spigot just skips them.
-                        }
+                        Location eyes = player.getEyeLocation();
+                        tasks.entity(v, () -> { // the villager's own thread on Folia
+                            v.getWorld().playSound(v.getLocation(), Sound.ENTITY_VILLAGER_YES, 1f, 1f);
+                            try {
+                                v.lookAt(eyes);
+                            } catch (NoSuchMethodError spigot) {
+                                // Paper-only; plain Spigot just skips it.
+                            }
+                        });
                     }
                 }));
     }
@@ -488,7 +615,6 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         sessions.remove(event.getPlayer().getUniqueId());
-        cooldowns.clear(event.getPlayer().getUniqueId());
     }
 
     @EventHandler(ignoreCancelled = true)
@@ -526,16 +652,34 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
         return false;
     }
 
-    private boolean passCooldown(CommandSender sender) {
+    /** The cooldown and the hourly cap, per player. The console and pollicraft.bypasscooldown skip both. */
+    private boolean passLimit(CommandSender sender, RateLimiter limits) {
         if (!(sender instanceof Player player) || player.hasPermission("pollicraft.bypasscooldown")) {
             return true;
         }
-        long left = cooldowns.tryUse(player.getUniqueId(), System.currentTimeMillis());
-        if (left > 0) {
-            send(player, "&cPlease wait " + (left + 999) / 1000 + "s before the next request.");
-            return false;
+        RateLimiter.Decision decision = limits.tryAcquire(player.getUniqueId(), System.currentTimeMillis());
+        if (decision.allowed()) {
+            return true;
         }
-        return true;
+        long left = decision.retryAfterMillis();
+        if (left > cooldownMillis) {
+            send(player, "&cYou reached the hourly limit. Try again in " + (left + 59_999) / 60_000 + " min.");
+        } else {
+            send(player, "&cPlease wait " + (left + 999) / 1000 + "s before the next request.");
+        }
+        return false;
+    }
+
+    /** Shows players with pollicraft.cost (ops by default) what an answer cost, using the list loaded at start. */
+    private void sendCost(CommandSender sender, String model, PollinationsClient.Answer answer) {
+        Catalogue catalogue = textCatalogue;
+        if (catalogue == null || !sender.hasPermission("pollicraft.cost")) {
+            return;
+        }
+        double pollen = catalogue.textCost(model, answer.promptTokens(), answer.completionTokens());
+        if (pollen > 0) {
+            send(sender, "&8\u2248 " + Catalogue.format(pollen) + " Pollen");
+        }
     }
 
     /** Sends the reply on the player's thread, or the global thread for the console. */
@@ -585,7 +729,10 @@ public final class PolliCraftPlugin extends JavaPlugin implements Listener, TabE
             return filter(List.of("text", "image"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("npc")) {
-            return filter(List.of("create", "persona", "remove", "personas"), args[1]);
+            return filter(List.of("create", "persona", "model", "remove", "personas"), args[1]);
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("npc") && args[1].equalsIgnoreCase("model")) {
+            return filter(List.of("default"), args[2]);
         }
         boolean personaArg = (args.length == 4 && args[1].equalsIgnoreCase("create"))
                 || (args.length == 3 && args[1].equalsIgnoreCase("persona"));
