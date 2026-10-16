@@ -27,6 +27,10 @@ public final class PollinationsClient {
     public record Message(String role, String content) {
     }
 
+    /** The assistant's text and the tokens it was billed for (0 when the API did not say). */
+    public record Answer(String text, int promptTokens, int completionTokens) {
+    }
+
     /** Thrown when the API answers with a non-2xx status. */
     public static final class ApiException extends RuntimeException {
         private final int status;
@@ -62,8 +66,8 @@ public final class PollinationsClient {
         return !apiKey.isEmpty();
     }
 
-    /** POST /v1/chat/completions and return the assistant's text. */
-    public CompletableFuture<String> chat(String model, List<Message> messages, int maxTokens) {
+    /** POST /v1/chat/completions and return the assistant's text with its token usage. */
+    public CompletableFuture<Answer> chat(String model, List<Message> messages, int maxTokens) {
         HttpRequest request = authorized(URI.create(baseUrl + "/v1/chat/completions"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(chatBody(model, messages, maxTokens)))
@@ -71,7 +75,7 @@ public final class PollinationsClient {
         return http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .thenApply(response -> {
                     ensureOk(response.statusCode(), response.body());
-                    return parseChatContent(response.body());
+                    return parseAnswer(response.body());
                 });
     }
 
@@ -89,12 +93,17 @@ public final class PollinationsClient {
 
     /** GET /text/models or /image/models and return model names with their aliases. */
     public CompletableFuture<List<String>> models(String kind) {
+        return modelList(kind).thenApply(PollinationsClient::parseModelList);
+    }
+
+    /** GET /text/models or /image/models and return the raw JSON list (names, aliases, prices, health). */
+    public CompletableFuture<String> modelList(String kind) {
         String path = "image".equals(kind) ? "/image/models" : "/text/models";
         HttpRequest request = authorized(URI.create(baseUrl + path)).GET().build();
         return http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .thenApply(response -> {
                     ensureOk(response.statusCode(), response.body());
-                    return parseModelList(response.body());
+                    return response.body();
                 });
     }
 
@@ -174,6 +183,17 @@ public final class PollinationsClient {
             return text.toString().trim();
         }
         return content.getAsString().trim();
+    }
+
+    static Answer parseAnswer(String json) {
+        JsonElement usage = JsonParser.parseString(json).getAsJsonObject().get("usage");
+        JsonObject tokens = usage != null && usage.isJsonObject() ? usage.getAsJsonObject() : new JsonObject();
+        return new Answer(parseChatContent(json), count(tokens, "prompt_tokens"), count(tokens, "completion_tokens"));
+    }
+
+    private static int count(JsonObject usage, String key) {
+        JsonElement value = usage.get(key);
+        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber() ? value.getAsInt() : 0;
     }
 
     static List<String> parseModelList(String json) {

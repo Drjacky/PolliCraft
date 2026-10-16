@@ -31,5 +31,8 @@ permissions:
     description: Reload the config
     default: op
   pollicraft.bypasscooldown:
-    description: Skip the request cooldown
+    description: Skip the request cooldown and the hourly limits
+    default: op
+  pollicraft.cost:
+    description: See the Pollen cost after each answer
     default: op
